@@ -201,6 +201,42 @@
     if (data.notes) out.push("ملاحظات: " + data.notes);
     return out.join("\n");
   }
+  /* ---------- نسخة الطلب على البريد (FormSubmit) — لا تعطّل واتساب أبداً ---------- */
+  function sendOrderEmail(no, data) {
+    try {
+      var to = String(C.orderEmail || "").trim();
+      if (!to) return null;
+      var L = lines(), T = totals(), d = new Date(Date.now() + 3 * 3600e3);
+      var p2 = function (n) { return ("0" + n).slice(-2); };
+      var f = new URLSearchParams();
+      f.append("_subject", "طلب جديد #" + no + " - متجر " + C.storeName);
+      f.append("_template", "table");
+      f.append("_captcha", "false");
+      f.append("رقم الطلب", no);
+      f.append("التاريخ والوقت (الرياض)", d.getUTCFullYear() + "/" + p2(d.getUTCMonth() + 1) + "/" + p2(d.getUTCDate()) + " " + p2(d.getUTCHours()) + ":" + p2(d.getUTCMinutes()));
+      f.append("اسم العميل", data.name);
+      f.append("الجوال", data.phone);
+      f.append("المدينة", data.city);
+      f.append("العنوان", data.address);
+      f.append("طريقة الدفع", data.payment);
+      f.append("ملاحظات", data.notes || "-");
+      L.forEach(function (l, i) { f.append("المنتج " + (i + 1), l.p.name + " — " + l.s.label + " — الكمية " + l.qty + " × " + money(l.s.price) + " = " + money(l.total)); });
+      f.append("المجموع الفرعي", money(T.sub));
+      f.append("الشحن", T.ship === 0 ? "مجاني" : money(T.ship));
+      f.append("الإجمالي", money(T.total));
+      var ep = /^https?:\/\//.test(to) ? to : "https://formsubmit.co/ajax/" + encodeURIComponent(to);
+      var body = f.toString();
+      if (window.fetch) {
+        try {
+          // طلب بسيط (form-urlencoded) + keepalive حتى يكتمل الإرسال حتى لو غادرت الصفحة
+          return fetch(ep, { method: "POST", mode: "cors", keepalive: true, headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" }, body: body })
+            .catch(function () {});
+        } catch (e) {}
+      }
+      if (navigator.sendBeacon) navigator.sendBeacon(ep, f);
+    } catch (err) {}
+    return null;
+  }
   function fail(msg, el) {
     var e = $("#formError"); e.textContent = msg; e.hidden = false;
     if (el) { el.classList.add("bad"); el.focus(); }
@@ -226,9 +262,14 @@
     var url = waBase + "?text=" + encodeURIComponent(buildMessage(no, data));
     window.__lastOrder = { no: no, url: url };
     $("#doneNo").textContent = no; $("#doneLink").href = url;
+    var mail = sendOrderEmail(no, data); // يُرسل بالخلفية ولا يؤخر فتح واتساب
     var w = null;
     try { w = window.open(url, "_blank"); if (w) w.opener = null; } catch (err) {}
-    if (!w) setTimeout(function () { location.href = url; }, 50); // في حال منع النوافذ المنبثقة
+    if (!w) { // في حال منع النوافذ المنبثقة: ننتقل لواتساب بعد انتهاء الإرسال أو 1.5 ثانية كحد أقصى
+      var went = false, go = function () { if (!went) { went = true; location.href = url; } };
+      setTimeout(go, 1500);
+      if (mail && mail.then) mail.then(go, go); else setTimeout(go, 50);
+    }
     cart = []; save(); f.notes.value = "";
     setView("done");
   });
